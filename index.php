@@ -57,6 +57,7 @@ class Redis_Page_Cache {
 
 		if ( function_exists( 'add_action' ) ) {
 			add_action( 'clean_post_cache', array( __CLASS__, 'clean_post_cache' ) );
+			add_action( 'clean_product_cache', array( __CLASS__, 'clean_product_cache' ) );
 			add_action( 'transition_post_status', array( __CLASS__, 'transition_post_status' ), 10, 3 );
 			add_action( 'template_redirect', array( __CLASS__, 'template_redirect' ), 100 );
 		} else {
@@ -590,7 +591,10 @@ class Redis_Page_Cache {
 	 * Runs during template_redirect, steals some post ids and flag our caches.
 	 */
 	public static function template_redirect() {
+//		Get Current Post id
 		$blog_id = get_current_blog_id();
+//		Get Current Product id
+		$product_id = wc_get_product()->get_id();
 
 		if ( is_singular() ) {
 			self::flag( sprintf( 'post:%d:%d', $blog_id, get_queried_object_id() ) );
@@ -598,6 +602,10 @@ class Redis_Page_Cache {
 
 		if ( is_feed() ) {
 			self::flag( sprintf( 'feed:%d', $blog_id ) );
+		}
+
+		if ( is_woocommerce() || has_tag('product') ) {
+			self::flag( sprintf( 'product:%d:%d', $product_id, get_queried_object_id() ) );
 		}
 	}
 
@@ -611,6 +619,15 @@ class Redis_Page_Cache {
 		}
 
 		self::clear_cache_by_post_id( $post_id, false );
+	}
+
+	public static function clean_product_cache ( $product_id ){
+		$product = wc_get_product( $product_id );
+		if ( empty( $product->get_status ) || $product->get_status != 'publish' ) {
+			return;
+		}
+//		self::clear_cache_by_flag( 'product' );
+		self::clear_cache_by_product_id( $product_id, false);
 	}
 
 	/**
@@ -732,6 +749,20 @@ class Redis_Page_Cache {
 		), $expire );
 	}
 
+	public static function clear_cache_by_product_id ( $product_id, $expire = true ) {
+		$product = wc_get_product( $product_id );
+		$home    = get_option( 'home' );
+
+		self::clear_cache_by_url( array(
+			trailingslashit( $home ),
+			$home,
+		), $expire );
+
+		self::clear_cache_by_flag( array(
+			sprintf( 'product:%d:%d', $product, $product_id ),
+		), $expire );
+	}
+
 	/**
 	 * Pre 4.7 add_action() compatibility.
 	 */
@@ -739,6 +770,10 @@ class Redis_Page_Cache {
 		// Filters are not yet available, so hi-jack the $wp_filter global to add our actions.
 		$GLOBALS['wp_filter']['clean_post_cache'][10]['pj-page-cache']       = array(
 			'function'      => array( __CLASS__, 'clean_post_cache' ),
+			'accepted_args' => 1
+		);
+		$GLOBALS['wp_filter']['clean_product_cache'][10]['pj-page-cache']       = array(
+			'function'      => array( __CLASS__, 'clean_product_cache' ),
 			'accepted_args' => 1
 		);
 		$GLOBALS['wp_filter']['transition_post_status'][10]['pj-page-cache'] = array(
